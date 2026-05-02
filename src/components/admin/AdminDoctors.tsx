@@ -245,12 +245,7 @@ const AdminDoctors = ({ doctors, onRefresh }: AdminDoctorsProps) => {
                         <XCircle className="w-4 h-4 mr-1" /> Reject
                       </Button>
                     </>)}
-                    {status === "APPROVED" && (
-                      <Button size="sm" onClick={() => setConfirmAction({ doctorId: doc.id, action: "suspend", label: "suspend", isActive: null })}
-                        className="bg-warning/10 text-warning hover:bg-warning/20 border border-warning/20 h-9">
-                        <PauseCircle className="w-4 h-4 mr-1" /> Suspend
-                      </Button>
-                    )}
+
                     {status === "REJECTED" && (
                       <Button size="sm" onClick={() => setConfirmAction({ doctorId: doc.id, action: "approve", label: "approve", isActive: true })}
                         className="bg-success/10 text-success hover:bg-success/20 border border-success/20 h-9">
