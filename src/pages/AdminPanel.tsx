@@ -1,460 +1,208 @@
-import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { 
-  ShieldCheck, 
-  Users, 
-  UserCheck, 
-  UserPlus, 
-  Clock, 
-  FileText, 
-  CheckCircle, 
-  XCircle, 
-  Eye, 
-  LogOut,
-  Search,
-  AlertCircle,
-  Trash2
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import AdminLogin from "@/components/admin/AdminLogin";
+import AdminSidebar, { type AdminView } from "@/components/admin/AdminSidebar";
+import AdminOverview from "@/components/admin/AdminOverview";
+import AdminDoctors from "@/components/admin/AdminDoctors";
+import AdminPatients from "@/components/admin/AdminPatients";
+import AdminAppointments from "@/components/admin/AdminAppointments";
+import AdminActivity from "@/components/admin/AdminActivity";
+import AdminSettings from "@/components/admin/AdminSettings";
+import { AnimatePresence, motion } from "framer-motion";
+import { useToast } from "@/hooks/use-toast";
 
 const AdminPanel = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [doctors, setDoctors] = useState<any[]>([]);
-  const [filter, setFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED">("ALL");
-  const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
+  const [isAuthenticated, setIsAuthenticated] = useState(() =>
+    sessionStorage.getItem("admin_authenticated") === "true"
+  );
+  const [activeView, setActiveView] = useState<AdminView>("overview");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  const [doctors, setDoctors] = useState<any[]>([]);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
 
+  // ============ DATA FETCHING (no foreign key joins - manual merge) ============
 
-  const ADMIN_PASSWORD = "Medbud@2k26";
+  const fetchDoctors = useCallback(async () => {
+    try {
+      // Step 1: Get all doctors
+      const { data: doctorRows, error: docErr } = await supabase
+        .from("doctors")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-  useEffect(() => {
-    // Check if already authenticated in session storage
-    const auth = sessionStorage.getItem("admin_authenticated");
-    if (auth === "true") {
-      setIsAuthenticated(true);
-      fetchDoctors();
+      if (docErr) { console.error("Doctor fetch error:", docErr); setDoctors([]); return; }
+      if (!doctorRows || doctorRows.length === 0) { setDoctors([]); return; }
+
+      // Step 2: Get profiles for these doctors
+      const userIds = doctorRows.map(d => d.user_id).filter(Boolean);
+      let profileMap = new Map<string, any>();
+
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", userIds);
+        profiles?.forEach(p => profileMap.set(p.id, p));
+      }
+
+      // Step 3: Merge
+      const merged = doctorRows.map(d => ({
+        ...d,
+        profiles: profileMap.get(d.user_id) || null,
+      }));
+
+      setDoctors(merged);
+    } catch (err) {
+      console.error("Error fetching doctors:", err);
     }
   }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password === ADMIN_PASSWORD) {
-      setIsAuthenticated(true);
-      sessionStorage.setItem("admin_authenticated", "true");
-      fetchDoctors();
-      toast({
-        title: "Access Granted",
-        description: "Welcome to the Admin Control Panel.",
-      });
-    } else {
-      toast({
-        title: "Access Denied",
-        description: "Invalid administrator password.",
-        variant: "destructive",
-      });
+  const fetchPatients = useCallback(async () => {
+    try {
+      const { data: roleData } = await supabase.from("user_roles").select("user_id").eq("role", "patient");
+      const patientIds = roleData?.map(r => r.user_id) || [];
+      if (patientIds.length === 0) { setPatients([]); return; }
+
+      const { data, error } = await supabase.from("profiles").select("*").in("id", patientIds).order("created_at", { ascending: false });
+      if (error) throw error;
+      setPatients((data || []).map(p => ({ ...p, role: "patient" })));
+    } catch (err) {
+      console.error("Error fetching patients:", err);
     }
-  };
+  }, []);
+
+  const fetchAppointments = useCallback(async () => {
+    try {
+      // Step 1: Get all appointments
+      const { data: apptRows, error: apptErr } = await supabase
+        .from("appointments")
+        .select("*")
+        .order("appointment_date", { ascending: false })
+        .limit(200);
+
+      if (apptErr) { console.error("Appt error:", apptErr); setAppointments([]); return; }
+      if (!apptRows || apptRows.length === 0) { setAppointments([]); return; }
+
+      // Step 2: Get doctor IDs, then doctor user_ids, then profile names
+      const doctorIds = [...new Set(apptRows.map(a => a.doctor_id).filter(Boolean))];
+
+      let docNameMap = new Map<string, string>();
+      if (doctorIds.length > 0) {
+        const { data: docRows } = await supabase.from("doctors").select("id, user_id").in("id", doctorIds);
+        const docUserIds = docRows?.map(d => d.user_id).filter(Boolean) || [];
+
+        if (docUserIds.length > 0) {
+          const { data: profiles } = await supabase.from("profiles").select("id, full_name").in("id", docUserIds);
+          const profileMap = new Map(profiles?.map(p => [p.id, p.full_name]) || []);
+          docRows?.forEach(d => {
+            docNameMap.set(d.id, profileMap.get(d.user_id) || "Unknown");
+          });
+        }
+      }
+
+      setAppointments(apptRows.map(a => ({
+        ...a,
+        doctorName: docNameMap.get(a.doctor_id) || "Unknown",
+      })));
+    } catch (err) {
+      console.error("Error fetching appointments:", err);
+    }
+  }, []);
+
+  const fetchAllData = useCallback(async () => {
+    setLoadingData(true);
+    await Promise.all([fetchDoctors(), fetchPatients(), fetchAppointments()]);
+    setLoadingData(false);
+  }, [fetchDoctors, fetchPatients, fetchAppointments]);
+
+  // ============ REALTIME SUBSCRIPTIONS ============
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetchAllData();
+
+    const ch1 = supabase.channel("adm-doc").on("postgres_changes", { event: "*", schema: "public", table: "doctors" }, (payload) => {
+      fetchDoctors();
+      // Show explicit toast if a new doctor registers
+      if (payload.eventType === "INSERT" && payload.new.is_active === null) {
+        toast({
+          title: "👨‍⚕️ New Doctor Registration!",
+          description: "A new doctor has registered and is awaiting your approval.",
+          variant: "default",
+          duration: 10000,
+        });
+      }
+    }).subscribe();
+    
+    const ch2 = supabase.channel("adm-prof").on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => { fetchDoctors(); fetchPatients(); }).subscribe();
+    const ch3 = supabase.channel("adm-appt").on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => fetchAppointments()).subscribe();
+    const ch4 = supabase.channel("adm-role").on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, () => { fetchPatients(); fetchDoctors(); }).subscribe();
+
+    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); };
+  }, [isAuthenticated, fetchAllData, fetchDoctors, fetchPatients, fetchAppointments, toast]);
 
   const handleLogout = () => {
-    setIsAuthenticated(false);
     sessionStorage.removeItem("admin_authenticated");
-  };
-
-  const fetchDoctors = async () => {
-    setLoading(true);
-    try {
-      const { data: doctorsData, error: doctorsError } = await supabase
-        .from("doctors")
-        .select('*')
-        .order("created_at", { ascending: false });
-
-      if (doctorsError) throw doctorsError;
-      
-      if (!doctorsData || doctorsData.length === 0) {
-        setDoctors([]);
-        return;
-      }
-
-      // Fetch profiles manually to avoid foreign key issues
-      const userIds = doctorsData.map(d => d.user_id);
-      const { data: profilesData, error: profilesError } = await supabase
-        .from("profiles")
-        .select('id, full_name, phone')
-        .in("id", userIds);
-        
-      if (profilesError) throw profilesError;
-      
-      const mergedData = doctorsData.map(doc => {
-        const profile = profilesData?.find(p => p.id === doc.user_id);
-        return {
-          ...doc,
-          profiles: profile || null
-        };
-      });
-
-      setDoctors(mergedData);
-    } catch (error: any) {
-      toast({
-        title: "Error fetching data",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateDoctorStatus = async (doctorId: string, status: "APPROVED" | "REJECTED") => {
-    const action = status === "APPROVED" ? "approve" : "reject";
-    if (!window.confirm(`Are you sure you want to ${action} this doctor?`)) return;
-    
-    setLoading(true);
-    try {
-      const { error } = await supabase
-        .from("doctors")
-        .update({ 
-          is_active: status === "APPROVED"
-        })
-        .eq("id", doctorId);
-
-      if (error) throw error;
-
-      toast({
-        title: `Doctor ${status === "APPROVED" ? "Approved" : "Rejected"}`,
-        description: `The doctor has been ${status.toLowerCase()} successfully.`,
-      });
-
-      fetchDoctors();
-    } catch (error: any) {
-      toast({
-        title: "Update failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const deleteDoctor = async (doctorId: string) => {
-    if (!window.confirm("Are you sure you want to DELETE this doctor's profile? This cannot be undone.")) return;
-    
-    setLoading(true);
-    try {
-      const doctor = doctors.find(d => d.id === doctorId);
-      const userId = doctor?.user_id;
-
-      // Delete related data first (ignore errors for tables that may be empty)
-      if (userId) {
-        await supabase.from("patient_records").delete().eq("doctor_id", doctorId);
-        await supabase.from("tokens").delete().eq("doctor_id", doctorId);
-        await supabase.from("appointments").delete().eq("doctor_id", doctorId);
-        await supabase.from("prepone_requests").delete().eq("doctor_id", doctorId);
-        await supabase.from("clinics").delete().eq("doctor_id", doctorId);
-      }
-
-      // Delete the doctor record
-      const { error } = await supabase.from("doctors").delete().eq("id", doctorId);
-      if (error) throw error;
-
-      // Clean up user data
-      if (userId) {
-        await supabase.from("user_roles").delete().eq("user_id", userId);
-        await supabase.from("profiles").delete().eq("id", userId);
-      }
-
-      toast({
-        title: "Doctor Deleted",
-        description: "Profile removed. The doctor must register again.",
-      });
-
-      fetchDoctors();
-    } catch (error: any) {
-      toast({
-        title: "Deletion failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getDocStatus = (doc: any) => {
-    if (doc.is_active === true) return "APPROVED";
-    if (doc.is_active === false) return "REJECTED";
-    return "PENDING";
-  };
-
-  const filteredDoctors = doctors.filter(doc => {
-    const status = getDocStatus(doc);
-    const matchesFilter = filter === "ALL" || status === filter;
-    const searchLower = searchQuery.toLowerCase();
-    const matchesSearch = !searchQuery || 
-      (doc.profiles?.full_name?.toLowerCase().includes(searchLower)) ||
-      (doc.license_number?.toLowerCase().includes(searchLower)) ||
-      (doc.specialization?.toLowerCase().includes(searchLower));
-    return matchesFilter && matchesSearch;
-  });
-
-  const stats = {
-    total: doctors.length,
-    pending: doctors.filter(d => getDocStatus(d) === "PENDING").length,
-    approved: doctors.filter(d => getDocStatus(d) === "APPROVED").length,
+    setIsAuthenticated(false);
   };
 
   if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md"
-        >
-          <Card className="p-8 border-slate-800 bg-slate-900 shadow-2xl">
-            <div className="flex flex-col items-center mb-8">
-              <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center mb-4">
-                <ShieldCheck className="w-10 h-10 text-primary" />
-              </div>
-              <h1 className="text-2xl font-bold text-white">Admin Access</h1>
-              <p className="text-slate-400 text-sm">Enter administrator password to continue</p>
-            </div>
-
-            <form onSubmit={handleLogin} className="space-y-6">
-              <div>
-                <Input
-                  type="password"
-                  placeholder="Enter Admin Password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-12"
-                  autoFocus
-                />
-              </div>
-              <Button type="submit" className="w-full h-12 text-lg font-semibold">
-                Authorize
-              </Button>
-            </form>
-
-            <div className="mt-8 pt-6 border-t border-slate-800 text-center">
-              <button 
-                onClick={() => toast({ title: "Hint", description: "Password is Medbud@2k26" })}
-                className="text-xs text-slate-600 hover:text-slate-400"
-              >
-                Forgot Password?
-              </button>
-            </div>
-          </Card>
-        </motion.div>
-      </div>
-    );
+    return <AdminLogin onLogin={() => setIsAuthenticated(true)} />;
   }
 
+  const today = new Date().toISOString().split("T")[0];
+  const pendingDoctors = doctors.filter(d => d.is_active === null).length;
+  const pendingAppointments = appointments.filter(a => a.status === "pending").length;
+  const approvedDoctors = doctors.filter(d => d.is_active === true).length;
+  const todayAppointments = appointments.filter(a => a.appointment_date === today).length;
+
+  const revenueEstimate = doctors.reduce((sum, d) => {
+    const confirmedCount = appointments.filter(a => a.doctor_id === d.id && a.status === "confirmed").length;
+    return sum + (confirmedCount * (d.consultation_fee || 0));
+  }, 0);
+
+  const overviewStats = {
+    totalDoctors: doctors.length, pendingDoctors, approvedDoctors,
+    totalPatients: patients.length, totalAppointments: appointments.length,
+    todayAppointments, pendingAppointments, totalRevenue: revenueEstimate,
+    recentDoctors: doctors.slice(0, 5), recentPatients: patients.slice(0, 5),
+  };
+
+  const sidebarWidth = sidebarCollapsed ? 72 : 260;
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-      {/* Header */}
-      <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-16 items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6 text-primary" />
-            <span className="text-xl font-bold">Admin Dashboard</span>
-          </div>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground hover:text-destructive">
-            <LogOut className="mr-2 h-4 w-4" /> Sign Out
-          </Button>
-        </div>
-      </header>
+    <div className="min-h-screen bg-background text-foreground">
+      <AdminSidebar activeView={activeView} onViewChange={setActiveView} onLogout={handleLogout}
+        collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        pendingDoctors={pendingDoctors} pendingAppointments={pendingAppointments} />
 
-      <main className="container py-8">
-        {/* Stats Grid — Clickable cards to filter */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Card 
-            className={`p-6 border-l-4 border-l-blue-500 cursor-pointer transition-all hover:shadow-lg ${filter === "ALL" ? "ring-2 ring-blue-500" : ""}`}
-            onClick={() => setFilter("ALL")}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Doctors</p>
-                <h3 className="text-3xl font-bold mt-1">{stats.total}</h3>
+      <main className="transition-all duration-300 ease-in-out min-h-screen" style={{ marginLeft: sidebarWidth }}>
+        <div className="p-6 md:p-8 max-w-[1600px]">
+          {loadingData && doctors.length === 0 && patients.length === 0 ? (
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <div className="text-center">
+                <div className="w-12 h-12 border-3 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-muted-foreground">Loading platform data...</p>
               </div>
-              <Users className="h-10 w-10 text-blue-500/20" />
             </div>
-          </Card>
-          <Card 
-            className={`p-6 border-l-4 border-l-amber-500 cursor-pointer transition-all hover:shadow-lg ${filter === "PENDING" ? "ring-2 ring-amber-500" : ""}`}
-            onClick={() => setFilter("PENDING")}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Pending Approvals</p>
-                <h3 className="text-3xl font-bold mt-1">{stats.pending}</h3>
-              </div>
-              <Clock className="h-10 w-10 text-amber-500/20" />
-            </div>
-          </Card>
-          <Card 
-            className={`p-6 border-l-4 border-l-green-500 cursor-pointer transition-all hover:shadow-lg ${filter === "APPROVED" ? "ring-2 ring-green-500" : ""}`}
-            onClick={() => setFilter("APPROVED")}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Approved Doctors</p>
-                <h3 className="text-3xl font-bold mt-1">{stats.approved}</h3>
-              </div>
-              <UserCheck className="h-10 w-10 text-green-500/20" />
-            </div>
-          </Card>
+          ) : (
+            <AnimatePresence mode="wait">
+              <motion.div key={activeView} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
+                {activeView === "overview" && <AdminOverview stats={overviewStats} onNavigate={(v) => setActiveView(v as AdminView)} />}
+                {activeView === "doctors" && <AdminDoctors doctors={doctors} onRefresh={fetchDoctors} />}
+                {activeView === "patients" && <AdminPatients patients={patients} onRefresh={fetchPatients} />}
+                {activeView === "appointments" && <AdminAppointments appointments={appointments} onRefresh={fetchAppointments} />}
+                {activeView === "activity" && <AdminActivity />}
+                {activeView === "settings" && <AdminSettings />}
+              </motion.div>
+            </AnimatePresence>
+          )}
         </div>
-
-        {/* Filters & Search */}
-        <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-6">
-          <div className="flex items-center gap-2 bg-muted p-1 rounded-lg w-full md:w-auto">
-            {(["ALL", "PENDING", "APPROVED", "REJECTED"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setFilter(t)}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  filter === t 
-                    ? "bg-background text-foreground shadow-sm" 
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-          <div className="relative w-full md:w-96">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input 
-              placeholder="Search by name, license or specialty..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-        </div>
-
-        {/* Doctor Table */}
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-muted/50 border-b">
-                  <th className="p-4 text-sm font-semibold text-muted-foreground">Doctor</th>
-                  <th className="p-4 text-sm font-semibold text-muted-foreground">License Info</th>
-                  <th className="p-4 text-sm font-semibold text-muted-foreground">Status</th>
-                  <th className="p-4 text-sm font-semibold text-muted-foreground">Created At</th>
-                  <th className="p-4 text-sm font-semibold text-muted-foreground text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredDoctors.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-12 text-center text-muted-foreground">
-                      <AlertCircle className="h-10 w-10 mx-auto mb-2 opacity-20" />
-                      <p>No doctors found matching your criteria.</p>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredDoctors.map((doc) => {
-                    const status = getDocStatus(doc);
-                    return (
-                      <tr key={doc.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="p-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
-                              {doc.profiles?.full_name?.charAt(0) || "D"}
-                            </div>
-                            <div>
-                              <p className="font-semibold">{doc.profiles?.full_name || "Unknown Doctor"}</p>
-                              <p className="text-xs text-muted-foreground">{doc.specialization} • {doc.experience_years || 0} yrs exp</p>
-                              {doc.profiles?.phone && (
-                                <p className="text-xs text-muted-foreground">{doc.profiles.phone}</p>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <div className="space-y-1">
-                            <p className="text-sm font-mono font-semibold">{doc.license_number || "Not provided"}</p>
-                            <p className="text-xs text-muted-foreground">Fee: ₹{doc.consultation_fee}</p>
-                            {doc.document_url && (
-                              <a 
-                                href={doc.document_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="text-xs text-primary hover:underline flex items-center gap-1"
-                              >
-                                <FileText className="h-3 w-3" /> View Document
-                              </a>
-                            )}
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            status === "APPROVED" 
-                              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" 
-                              : status === "PENDING"
-                                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                                : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                          }`}>
-                            {status}
-                          </span>
-                        </td>
-                        <td className="p-4 text-sm text-muted-foreground">
-                          {new Date(doc.created_at).toLocaleDateString()}
-                        </td>
-                        <td className="p-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            {status === "PENDING" && (
-                              <>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline" 
-                                  className="h-8 text-green-600 hover:text-green-700 hover:bg-green-50"
-                                  onClick={() => updateDoctorStatus(doc.id, "APPROVED")}
-                                >
-                                  <CheckCircle className="h-4 w-4 mr-1" /> Approve
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline" 
-                                  className="h-8 text-destructive hover:bg-destructive/10"
-                                  onClick={() => updateDoctorStatus(doc.id, "REJECTED")}
-                                >
-                                  <XCircle className="h-4 w-4 mr-1" /> Reject
-                                </Button>
-                              </>
-                            )}
-                            <Button 
-                              size="icon" 
-                              variant="ghost" 
-                              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                              onClick={() => deleteDoctor(doc.id)}
-                              title="Delete Doctor"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
       </main>
-
-
     </div>
   );
 };

@@ -244,20 +244,19 @@ const DoctorAuth = () => {
         }
       }
 
-      // Step 2: Sign in immediately
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+      // Sign out immediately so they must wait for approval
+      await supabase.auth.signOut();
+
+      toast({ 
+        title: "🕐 Verification in Progress", 
+        description: "Your profile has been created successfully and is under review. You will be able to log in smoothly once the admin approves your credentials.",
+        duration: 8000
       });
-
-      if (signInError) {
-        toast({ title: "Account created but login failed", description: "Please try logging in manually.", variant: "destructive" });
-        setAuthView("login");
-        return;
-      }
-
-      toast({ title: "Registration Complete!", description: "Your doctor profile has been created. Redirecting..." });
-      navigate("/doctor-dashboard");
+      
+      // Redirect to home page
+      setTimeout(() => {
+        navigate("/");
+      }, 2000);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         toast({ title: "Validation error", description: error.errors[0].message, variant: "destructive" });

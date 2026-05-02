@@ -264,6 +264,7 @@ const DoctorDashboard = () => {
           const { count } = await supabase
             .from("tokens")
             .select('*', { count: 'exact', head: true })
+            .eq('doctor_id', doctorInfo.id)
             .eq('token_date', appointment.appointment_date);
           
           const orderIndex = (count || 0) + 1;
@@ -272,6 +273,7 @@ const DoctorDashboard = () => {
 
           await supabase.from("tokens").insert({
             doctor_id: doctorInfo.id,
+            patient_id: appointment.patient_id,
             appointment_id: appointmentId,
             token_number: newTokenNumber,
             token_date: appointment.appointment_date,
