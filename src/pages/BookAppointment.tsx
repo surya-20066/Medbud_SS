@@ -112,24 +112,39 @@ const BookAppointment = () => {
 
   const fetchClinics = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("clinics")
-      .select("id, clinic_name, address, city, pincode, state, doctor_id")
-      .eq("city", "Vizag");
-    
-    if (error) {
-      toast({ title: "Error loading hospitals", variant: "destructive" });
-    } else {
-      const filteredClinics = (data || []).filter(c => 
+    try {
+      const { data, error } = await supabase
+        .from("clinics")
+        .select("id, clinic_name, address, city, pincode, state, doctor_id");
+      
+      if (error) throw error;
+
+      // Filter by city "Vizag" in code instead of query to be more flexible (or just show all if none in Vizag)
+      let filteredClinics = (data || []).filter(c => 
+        (c.city?.toLowerCase() === "vizag" || c.city?.toLowerCase() === "visakhapatnam") &&
         !c.clinic_name.toLowerCase().includes("sm2") &&
         (c.clinic_name.toLowerCase().includes("hospital") || 
          c.clinic_name.toLowerCase().includes("medic") ||
          c.clinic_name.toLowerCase().includes("care") ||
          c.clinic_name.toLowerCase().includes("health"))
       );
+
+      // If no hospitals in Vizag, show all hospitals except test ones
+      if (filteredClinics.length === 0) {
+        filteredClinics = (data || []).filter(c => !c.clinic_name.toLowerCase().includes("sm2"));
+      }
+
       setClinics(filteredClinics);
+    } catch (error: any) {
+      console.error("Error loading hospitals:", error);
+      toast({ 
+        title: "Error loading hospitals", 
+        description: error.message || "Please check your connection.",
+        variant: "destructive" 
+      });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const fetchDoctors = async () => {

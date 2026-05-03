@@ -92,11 +92,14 @@ const Dashboard = () => {
         }
       }
 
-      // If we're still here, it's a patient - redirect to patient dashboard
-      if (!roles.includes("admin")) {
-        navigate("/patient-dashboard");
+      // If we're still here, check for admin
+      if (roles.includes("admin")) {
+        navigate("/admin-panel");
         return;
       }
+
+      // Default redirect for others (patients)
+      navigate("/patient-dashboard");
     } catch (error) {
       console.error("Error fetching user data:", error);
     } finally {

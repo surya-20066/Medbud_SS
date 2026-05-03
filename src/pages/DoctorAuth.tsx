@@ -78,6 +78,7 @@ const DoctorAuth = () => {
       if (isRecovery) return;
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
+        // Check user_roles table
         const { data: roles } = await supabase
           .from("user_roles")
           .select("role")
@@ -86,6 +87,19 @@ const DoctorAuth = () => {
         const userRoles = roles?.map(r => r.role) || [];
         if (userRoles.includes("doctor")) {
           navigate("/doctor-dashboard");
+          return;
+        }
+
+        // Fallback: check doctors table
+        const { data: doctorData } = await supabase
+          .from("doctors")
+          .select("id")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (doctorData) {
+          navigate("/doctor-dashboard");
+          return;
         }
       }
     };
@@ -132,14 +146,23 @@ const DoctorAuth = () => {
         
         const userRoles = roles?.map(r => r.role) || [];
         
+        // Fallback: check doctors table if user_roles is empty
         if (!userRoles.includes("doctor")) {
-          toast({
-            title: "Not a doctor account",
-            description: "This account is not registered as a doctor. Please sign up as a doctor or use the patient login.",
-            variant: "destructive",
-          });
-          await supabase.auth.signOut();
-          return;
+          const { data: doctorData } = await supabase
+            .from("doctors")
+            .select("id")
+            .eq("user_id", data.session.user.id)
+            .maybeSingle();
+
+          if (!doctorData) {
+            toast({
+              title: "Not a doctor account",
+              description: "This account is not registered as a doctor. Please sign up as a doctor or use the patient login.",
+              variant: "destructive",
+            });
+            await supabase.auth.signOut();
+            return;
+          }
         }
 
         toast({ title: "Welcome back, Doctor!", description: "Logged in successfully." });

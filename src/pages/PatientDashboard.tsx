@@ -94,17 +94,16 @@ const PatientDashboard = () => {
       const { data: rolesData } = await supabase.from("user_roles").select("role").eq("user_id", userId);
       setUserRoles(rolesData?.map((r) => r.role) || []);
 
-      // Fetch ALL appointments (recent + upcoming) so dashboard shows real data
       const { data: appointmentsData } = await supabase
         .from("appointments")
-        .select(`*, doctors:doctor_id (id, specialization, user_id)`)
+        .select(`*, doctors:doctor_id (id, specialization, user_id, profiles:user_id (full_name))`)
         .eq("patient_id", userId)
-        .order("appointment_date", { ascending: false })
-        .limit(20);
+        .order("appointment_date", { ascending: true })
+        .limit(10);
 
       const { data: tokensData } = await supabase
         .from("tokens")
-        .select(`*, doctors:doctor_id (id, specialization, user_id)`)
+        .select(`*, doctors:doctor_id (id, specialization, user_id, profiles:user_id (full_name))`)
         .eq("patient_id", userId)
         .in("status", ["waiting", "in_progress"])
         .gte("token_date", new Date().toISOString().split("T")[0])
@@ -114,7 +113,7 @@ const PatientDashboard = () => {
       // Fetch patient records
       const { data: recordsData } = await supabase
         .from("patient_records")
-        .select(`*, doctors:doctor_id (id, user_id), tokens:token_id (token_number, token_date)`)
+        .select(`*, doctors:doctor_id (id, user_id, profiles:user_id (full_name)), tokens:token_id (token_number, token_date)`)
         .eq("patient_id", userId)
         .order("created_at", { ascending: false });
 

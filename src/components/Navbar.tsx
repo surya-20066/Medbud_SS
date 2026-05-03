@@ -11,40 +11,17 @@ const Navbar = () => {
   const location = useLocation();
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<string | null>(null);
-  const [initialCheckDone, setInitialCheckDone] = useState(false);
-
-  const fetchUserRole = async (userId: string) => {
-    // First check if user is a doctor (doctors table is the source of truth)
-    const { data: doctorData } = await supabase
-      .from("doctors")
-      .select("id")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (doctorData) {
-      setRole("doctor");
-      return;
-    }
-
-    // Fallback: check user_roles table
-    const { data } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    setRole(data?.role ?? "patient");
-  };
 
   useEffect(() => {
+    // Initial session check
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchUserRole(session.user.id);
       }
-      setInitialCheckDone(true);
     });
 
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -57,6 +34,38 @@ const Navbar = () => {
     return () => subscription.unsubscribe();
   }, []);
 
+  const fetchUserRole = async (userId: string) => {
+    try {
+      // 1. Check user_roles table
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (roleData) {
+        setRole(roleData.role);
+        return;
+      }
+
+      // 2. Fallback: check doctors table
+      const { data: doctorData } = await supabase
+        .from("doctors")
+        .select("id")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (doctorData) {
+        setRole("doctor");
+      } else {
+        setRole("patient");
+      }
+    } catch (err) {
+      console.error("Error fetching role:", err);
+      setRole("patient");
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUser(null);
@@ -64,13 +73,9 @@ const Navbar = () => {
     navigate("/");
   };
 
-  // Determine if we're on a dashboard page (don't show Navbar there - dashboards have their own navs)
-  const isDashboardPage = ["/patient-dashboard", "/doctor-dashboard", "/admin-panel"].includes(location.pathname);
+  const isDashboardPage = ["/patient-dashboard", "/doctor-dashboard", "/admin-panel", "/dashboard"].includes(location.pathname);
   if (isDashboardPage) return null;
 
-  // Don't render auth-dependent UI until initial check is done
-  const showAuthButtons = initialCheckDone;
-  
   return (
     <motion.nav
       initial={{ y: -100 }}
@@ -81,8 +86,15 @@ const Navbar = () => {
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           <a 
-            href={!user ? "/#home" : role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard"}
+            href="/"
             className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            onClick={(e) => {
+              e.preventDefault();
+              if (!user) navigate("/");
+              else if (role === "doctor") navigate("/doctor-dashboard");
+              else if (role === "admin") navigate("/admin-panel");
+              else navigate("/patient-dashboard");
+            }}
           >
             <div className="w-10 h-10 rounded-lg bg-gradient-primary flex items-center justify-center">
               <Stethoscope className="w-6 h-6 text-white" />
@@ -91,40 +103,32 @@ const Navbar = () => {
           </a>
 
           <div className="hidden md:flex items-center gap-8">
-            <a href="/#home" className="text-foreground hover:text-primary transition-smooth">
-              Home
-            </a>
-            <a href="/#about" className="text-foreground hover:text-primary transition-smooth">
-              About Us
-            </a>
-            <a href="/#features" className="text-foreground hover:text-primary transition-smooth">
-              Features
-            </a>
-            <a href="/#testimonials" className="text-foreground hover:text-primary transition-smooth">
-              Testimonials
-            </a>
+            <a href="/#home" className="text-foreground hover:text-primary transition-smooth">Home</a>
+            <a href="/#about" className="text-foreground hover:text-primary transition-smooth">About Us</a>
+            <a href="/#features" className="text-foreground hover:text-primary transition-smooth">Features</a>
+            <a href="/#testimonials" className="text-foreground hover:text-primary transition-smooth">Testimonials</a>
             {!user && (
-              <a href="/doctor-auth" className="text-foreground hover:text-primary transition-smooth">
-                For Doctors
-              </a>
+              <a href="/doctor-auth" className="text-foreground hover:text-primary transition-smooth">For Doctors</a>
             )}
           </div>
 
           <div className="flex items-center gap-3">
-            {showAuthButtons && (
-              user ? (
-                <>
-                  <Button variant="ghost" onClick={() => navigate(role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard")}>
-                    Dashboard
-                  </Button>
-                  <Button variant="ghost" onClick={handleLogout}>Logout</Button>
-                </>
-              ) : (
-                <>
-                  <Button variant="ghost" onClick={() => navigate("/auth")}>Login</Button>
-                  <Button className="shadow-soft" onClick={() => navigate("/auth")}>Get Started</Button>
-                </>
-              )
+            {user ? (
+              <>
+                <Button variant="ghost" onClick={() => {
+                  if (role === "doctor") navigate("/doctor-dashboard");
+                  else if (role === "admin") navigate("/admin-panel");
+                  else navigate("/patient-dashboard");
+                }}>
+                  Dashboard
+                </Button>
+                <Button variant="ghost" onClick={handleLogout}>Logout</Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={() => navigate("/auth")}>Login</Button>
+                <Button className="shadow-soft" onClick={() => navigate("/auth")}>Get Started</Button>
+              </>
             )}
           </div>
         </div>
