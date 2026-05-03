@@ -22,6 +22,7 @@ const AdminPanel = () => {
   const [doctors, setDoctors] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
+  const [tokens, setTokens] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
   // ============ DATA FETCHING (no foreign key joins - manual merge) ============
@@ -113,11 +114,20 @@ const AdminPanel = () => {
     }
   }, []);
 
+  const fetchTokens = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.from("tokens").select("id, doctor_id, status");
+      if (!error && data) setTokens(data);
+    } catch (err) {
+      console.error("Error fetching tokens:", err);
+    }
+  }, []);
+
   const fetchAllData = useCallback(async () => {
     setLoadingData(true);
-    await Promise.all([fetchDoctors(), fetchPatients(), fetchAppointments()]);
+    await Promise.all([fetchDoctors(), fetchPatients(), fetchAppointments(), fetchTokens()]);
     setLoadingData(false);
-  }, [fetchDoctors, fetchPatients, fetchAppointments]);
+  }, [fetchDoctors, fetchPatients, fetchAppointments, fetchTokens]);
 
   // ============ REALTIME SUBSCRIPTIONS ============
 
@@ -137,7 +147,7 @@ const AdminPanel = () => {
         });
       }
     }).subscribe();
-    
+
     const ch2 = supabase.channel("adm-prof").on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => { fetchDoctors(); fetchPatients(); }).subscribe();
     const ch3 = supabase.channel("adm-appt").on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => fetchAppointments()).subscribe();
     const ch4 = supabase.channel("adm-role").on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, () => { fetchPatients(); fetchDoctors(); }).subscribe();
@@ -161,8 +171,9 @@ const AdminPanel = () => {
   const todayAppointments = appointments.filter(a => a.appointment_date === today).length;
 
   const revenueEstimate = doctors.reduce((sum, d) => {
-    const confirmedCount = appointments.filter(a => a.doctor_id === d.id && a.status === "confirmed").length;
-    return sum + (confirmedCount * (d.consultation_fee || 0));
+    // Revenue is based on accepted patients, which is represented by tokens (both booked and walk-in)
+    const acceptedCount = tokens.filter(t => t.doctor_id === d.id && t.status !== "cancelled").length;
+    return sum + (acceptedCount * (d.consultation_fee || 0));
   }, 0);
 
   const overviewStats = {

@@ -1,7 +1,25 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Settings, Shield, Database, Server, Globe } from "lucide-react";
+import { Settings, Shield, Database, Server, Globe, KeyRound } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
 const AdminSettings = () => {
+  const [newPassword, setNewPassword] = useState("");
+  const { toast } = useToast();
+
+  const handleUpdatePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 6) {
+      toast({ title: "Error", description: "Password must be at least 6 characters.", variant: "destructive" });
+      return;
+    }
+    localStorage.setItem("admin_override_password", newPassword);
+    setNewPassword("");
+    toast({ title: "Password Updated", description: "Master admin password has been changed successfully. Use this new password for your next login." });
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -29,6 +47,26 @@ const AdminSettings = () => {
           </motion.div>
         ))}
       </div>
+
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+        className="bg-card rounded-2xl border border-border p-6 shadow-soft mt-8 max-w-xl">
+        <h3 className="text-foreground font-semibold mb-4 flex items-center gap-2"><KeyRound className="w-4 h-4 text-primary" /> Change Admin Password</h3>
+        <p className="text-sm text-muted-foreground mb-4">Update the master password used to access the admin panel on this device.</p>
+        <form onSubmit={handleUpdatePassword} className="space-y-4">
+          <div>
+            <Input
+              type="password"
+              placeholder="Enter new admin password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="bg-muted/50 border-border"
+            />
+          </div>
+          <Button type="submit" className="w-full sm:w-auto">
+            Update Password
+          </Button>
+        </form>
+      </motion.div>
     </div>
   );
 };

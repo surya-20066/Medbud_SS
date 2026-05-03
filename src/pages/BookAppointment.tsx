@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
+import { formatTokenNumber } from "@/lib/formatToken";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -80,7 +81,6 @@ const BookAppointment = () => {
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
-  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [tokenNumber, setTokenNumber] = useState<number | null>(null);
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
@@ -108,11 +108,7 @@ const BookAppointment = () => {
     }
   }, [selectedClinic]);
 
-  useEffect(() => {
-    if (selectedDoctor && selectedDate) {
-      generateTimeSlots();
-    }
-  }, [selectedDoctor, selectedDate]);
+  // Time slots are no longer auto-generated as patients enter preferred times directly
 
   const fetchClinics = async () => {
     setLoading(true);
@@ -187,35 +183,7 @@ const BookAppointment = () => {
     setLoading(false);
   };
 
-  const generateTimeSlots = () => {
-    const slots: TimeSlot[] = [];
-    const startHour = 9;
-    const endHour = 18;
-    
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    const isToday = selectedDate === today;
-    // Current time in minutes with a 30-minute buffer so patients can't book slots that are about to pass
-    const currentMinutes = isToday ? now.getHours() * 60 + now.getMinutes() + 30 : 0;
-    
-    for (let hour = startHour; hour < endHour; hour++) {
-      for (let minute of [0, 30]) {
-        const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-        const slotMinutes = hour * 60 + minute;
-        // Slot is unavailable if it's in the past for today
-        const isPast = isToday && slotMinutes < currentMinutes;
-        slots.push({ time, available: !isPast });
-      }
-    }
-    setTimeSlots(slots);
-    // Clear selected time if it's now in the past
-    if (isToday && selectedTime) {
-      const [h, m] = selectedTime.split(':').map(Number);
-      if (h * 60 + m < currentMinutes) {
-        setSelectedTime('');
-      }
-    }
-  };
+  // Removed generateTimeSlots to allow patient-entered times
 
   const handleClinicSelect = (clinic: Clinic) => {
     setSelectedClinic(clinic);
@@ -285,13 +253,31 @@ const BookAppointment = () => {
     const filtered = allSearchableDoctors.filter(doc => {
       const nameMatch = doc.profiles?.full_name?.toLowerCase().includes(loweredQuery);
       const deptMatch = doc.specialization?.toLowerCase().includes(loweredQuery);
-      return nameMatch || deptMatch;
+      const locationMatch = doc.clinic?.address?.toLowerCase().includes(loweredQuery) ||
+                           doc.clinic?.city?.toLowerCase().includes(loweredQuery) ||
+                           doc.clinic?.state?.toLowerCase().includes(loweredQuery) ||
+                           doc.clinic?.clinic_name?.toLowerCase().includes(loweredQuery) ||
+                           doc.clinic?.pincode?.includes(loweredQuery);
+      return nameMatch || deptMatch || locationMatch;
     });
 
-    // Sort by name match priority (those whose name includes query should appear before dept match)
+    // Sort: location matches on top, then name matches, then dept matches
     const sorted = [...filtered].sort((a, b) => {
+      const aLocationMatch = a.clinic?.address?.toLowerCase().includes(loweredQuery) ||
+                             a.clinic?.city?.toLowerCase().includes(loweredQuery) ||
+                             a.clinic?.state?.toLowerCase().includes(loweredQuery) ||
+                             a.clinic?.clinic_name?.toLowerCase().includes(loweredQuery);
+      const bLocationMatch = b.clinic?.address?.toLowerCase().includes(loweredQuery) ||
+                             b.clinic?.city?.toLowerCase().includes(loweredQuery) ||
+                             b.clinic?.state?.toLowerCase().includes(loweredQuery) ||
+                             b.clinic?.clinic_name?.toLowerCase().includes(loweredQuery);
       const aNameMatch = a.profiles?.full_name?.toLowerCase().includes(loweredQuery);
       const bNameMatch = b.profiles?.full_name?.toLowerCase().includes(loweredQuery);
+
+      // Location matches first
+      if (aLocationMatch && !bLocationMatch) return -1;
+      if (!aLocationMatch && bLocationMatch) return 1;
+      // Then name matches
       if (aNameMatch && !bNameMatch) return -1;
       if (!aNameMatch && bNameMatch) return 1;
       return 0;
@@ -340,10 +326,51 @@ const BookAppointment = () => {
   };
 
   const handleTimeSelect = () => {
-    if (!selectedDate || !selectedTime) {
+    if (!selectedDate || !selectedTime || !selectedDoctor) {
       toast({ title: "Please select date and time", variant: "destructive" });
       return;
     }
+
+    // Basic time validation against doctor's availability
+    const day = new Date(selectedDate).getDay();
+    const timingStr = day === 0 ? ((selectedDoctor.timings as any)?.sun || "Closed") :
+                      day === 6 ? ((selectedDoctor.timings as any)?.sat || "9AM - 2PM") :
+                      ((selectedDoctor.timings as any)?.mon_fri || "9AM - 6PM");
+    
+    if (timingStr === "Closed") {
+      toast({ title: "Doctor is unavailable on this day", variant: "destructive" });
+      return;
+    }
+
+    // Simple parser for "9AM - 6PM" style strings
+    const parseTime = (s: string) => {
+      const match = s.match(/(\d+)\s*(AM|PM)/i);
+      if (!match) return null;
+      let hour = parseInt(match[1]);
+      const ampm = match[2].toUpperCase();
+      if (ampm === "PM" && hour < 12) hour += 12;
+      if (ampm === "AM" && hour === 12) hour = 0;
+      return hour;
+    };
+
+    const parts = timingStr.split("-");
+    if (parts.length === 2) {
+      const startHour = parseTime(parts[0]);
+      const endHour = parseTime(parts[1]);
+      const selectedHour = parseInt(selectedTime.split(":")[0]);
+      
+      if (startHour !== null && endHour !== null) {
+        if (selectedHour < startHour || selectedHour >= endHour) {
+          toast({ 
+            title: "Outside Working Hours", 
+            description: `Doctor is available from ${timingStr}. Please choose a time within this range.`,
+            variant: "destructive" 
+          });
+          return;
+        }
+      }
+    }
+
     setStep(5); // Go to patient details
   };
 
@@ -392,18 +419,28 @@ const BookAppointment = () => {
 
     setLoading(true);
     try {
-      // Get count of tokens for that date to give an ordered token number
-      const { count, error: countError } = await supabase
-        .from("tokens")
-        .select('*', { count: 'exact', head: true })
-        .eq('token_date', selectedDate);
-        
-      if (countError) throw countError;
-      
-      const orderIndex = (count || 0) + 1;
+      // Get the current highest token number for that doctor+date to predict next token
       const day = new Date(selectedDate).getDate().toString().padStart(2, '0');
-      const orderStr = orderIndex.toString().padStart(2, '0');
-      const newTokenNumber = Number(`${day}${orderStr}`);
+      const dayPrefix = Number(day);
+      const minRange = dayPrefix * 100;
+
+      const { data: maxTokenRows } = await supabase
+        .from("tokens")
+        .select('token_number')
+        .eq('doctor_id', selectedDoctor.id)
+        .eq('token_date', selectedDate)
+        .gte('token_number', minRange)
+        .order('token_number', { ascending: false })
+        .limit(1);
+
+      const maxTokenRow = maxTokenRows && maxTokenRows.length > 0 ? maxTokenRows[0] : null;
+
+      let newTokenNumber: number;
+      if (maxTokenRow && maxTokenRow.token_number >= minRange) {
+        newTokenNumber = maxTokenRow.token_number + 1;
+      } else {
+        newTokenNumber = minRange + 1;
+      }
 
       const newAppointmentId = crypto.randomUUID();
       const { error: apptError } = await supabase
@@ -517,7 +554,7 @@ const BookAppointment = () => {
     doc.text('Token Number', pageWidth / 2, 85, { align: 'center' });
     doc.setFontSize(48);
     doc.setTextColor(34, 197, 94);
-    doc.text(`#${tokenNumber}`, pageWidth / 2, 105, { align: 'center' });
+    doc.text(`#${formatTokenNumber(tokenNumber!, selectedDate)}`, pageWidth / 2, 105, { align: 'center' });
     
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(10);
@@ -690,7 +727,7 @@ const BookAppointment = () => {
     doc.text('Thank you for choosing MedBud!', pageWidth / 2, yPos, { align: 'center' });
     
     // Save
-    doc.save(`MedBud-Receipt-${tokenNumber}.pdf`);
+    doc.save(`MedBud-Receipt-${formatTokenNumber(tokenNumber!, selectedDate)}.pdf`);
   };
 
   const goBack = () => {
@@ -853,12 +890,12 @@ const BookAppointment = () => {
                       <Card className="p-6">
                         <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
                           <Search className="h-5 w-5 text-primary" />
-                          Search Doctor by Name
+                          Search Doctor by Name, Specialization or Location
                         </h3>
                         <div className="relative">
                           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                           <Input
-                            placeholder="Search by doctor name or department..."
+                            placeholder="Search by name, specialization, or location..."
                             value={doctorSearchQuery}
                             onChange={(e) => searchDoctorByName(e.target.value)}
                             className="pl-10 text-lg"
@@ -876,7 +913,7 @@ const BookAppointment = () => {
                         {!searchLoading && doctorSearchQuery.length > 0 && searchResults.length === 0 && (
                           <div className="text-center py-6">
                             <User className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-                            <p className="text-muted-foreground">No registered doctor found with that name or department</p>
+                            <p className="text-muted-foreground">No registered doctor found matching that name, specialization, or location</p>
                             <p className="text-xs text-muted-foreground mt-1">Make sure the doctor has signed up on MedBud</p>
                           </div>
                         )}
@@ -903,7 +940,7 @@ const BookAppointment = () => {
                                     {doc.clinic && (
                                       <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                                         <MapPin className="h-3 w-3" />
-                                        {doc.clinic.clinic_name}, {doc.clinic.city}
+                                        {doc.clinic.clinic_name}{doc.clinic.address ? `, ${doc.clinic.address}` : ''}, {doc.clinic.city}{doc.clinic.state ? `, ${doc.clinic.state}` : ''}
                                       </p>
                                     )}
                                   </div>
@@ -1135,20 +1172,27 @@ const BookAppointment = () => {
                 </div>
 
                 {selectedDate && (
-                  <div>
-                    <Label className="text-base font-semibold mb-3 block">Available Time Slots</Label>
-                    <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
-                      {timeSlots.map((slot) => (
-                        <Button
-                          key={slot.time}
-                          variant={selectedTime === slot.time ? "default" : "outline"}
-                          onClick={() => setSelectedTime(slot.time)}
-                          disabled={!slot.available}
-                          className="h-12"
-                        >
-                          {slot.time}
-                        </Button>
-                      ))}
+                  <div className="space-y-4 pt-4 border-t border-border mt-6">
+                    <div>
+                      <Label htmlFor="time" className="text-base font-semibold mb-2 block">Preferred Time</Label>
+                      <div className="mb-4 text-sm bg-muted/50 p-3 rounded-lg border border-border">
+                         <span className="text-muted-foreground flex items-center gap-2">
+                           <Clock className="w-4 h-4 text-primary" /> Doctor's Availability: 
+                           <span className="font-semibold text-foreground">
+                             {new Date(selectedDate).getDay() === 0 ? ((selectedDoctor.timings as any)?.sun || "Closed") :
+                              new Date(selectedDate).getDay() === 6 ? ((selectedDoctor.timings as any)?.sat || "9AM - 2PM") :
+                              ((selectedDoctor.timings as any)?.mon_fri || "9AM - 6PM")}
+                           </span>
+                         </span>
+                      </div>
+                      <Input
+                        id="time"
+                        type="time"
+                        value={selectedTime}
+                        onChange={(e) => setSelectedTime(e.target.value)}
+                        className="h-12 w-full md:w-1/2"
+                        required
+                      />
                     </div>
                   </div>
                 )}
@@ -1326,7 +1370,7 @@ const BookAppointment = () => {
                           className="text-right"
                         >
                           <p className="text-xs opacity-80">Token Number</p>
-                          <p className="text-4xl font-bold">#{tokenNumber}</p>
+                          <p className="text-4xl font-bold">#{formatTokenNumber(tokenNumber!, selectedDate)}</p>
                         </motion.div>
                       </div>
                     </div>

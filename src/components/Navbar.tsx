@@ -9,14 +9,30 @@ import { User } from "@supabase/supabase-js";
 const Navbar = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
+  const [role, setRole] = useState<string | null>(null);
+
+  const fetchUserRole = async (userId: string) => {
+    const { data } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId)
+      .single();
+    setRole(data?.role ?? "patient");
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
+      if (session?.user) fetchUserRole(session.user.id);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchUserRole(session.user.id);
+      } else {
+        setRole(null);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -37,7 +53,7 @@ const Navbar = () => {
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           <a 
-            href={user ? "/patient-dashboard" : "/#home"}
+            href={!user ? "/#home" : role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard"}
             className="flex items-center gap-2 hover:opacity-80 transition-opacity"
           >
             <div className="w-10 h-10 rounded-lg bg-gradient-primary flex items-center justify-center">
@@ -68,7 +84,12 @@ const Navbar = () => {
 
           <div className="flex items-center gap-3">
             {user ? (
-              <Button variant="ghost" onClick={handleLogout}>Logout</Button>
+              <>
+                <Button variant="ghost" onClick={() => navigate(role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard")}>
+                  Dashboard
+                </Button>
+                <Button variant="ghost" onClick={handleLogout}>Logout</Button>
+              </>
             ) : (
               <>
                 <Button variant="ghost" onClick={() => navigate("/auth")}>Login</Button>

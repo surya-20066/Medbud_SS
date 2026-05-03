@@ -217,11 +217,17 @@ const AdminDoctors = ({ doctors, onRefresh }: AdminDoctorsProps) => {
                   status === "PENDING" ? "border-warning/30" : "border-border hover:border-primary/20"
                 } ${isLoading ? "opacity-50 pointer-events-none" : ""}`}>
                 <div className="p-5 flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg flex-shrink-0 ${
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg flex-shrink-0 overflow-hidden ${
                     status === "APPROVED" ? "bg-success/10 text-success" :
                     status === "PENDING" ? "bg-warning/10 text-warning" :
                     "bg-destructive/10 text-destructive"
-                  }`}>{doc.profiles?.full_name?.charAt(0) || "D"}</div>
+                  }`}>
+                    {doc.document_url && doc.document_url.match(/\.(jpg|jpeg|png|webp|gif|svg)$|image/i) ? (
+                      <img src={doc.document_url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      doc.profiles?.full_name?.charAt(0) || "D"
+                    )}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-foreground font-semibold truncate">{doc.profiles?.full_name || "Unknown Doctor"}</p>
@@ -232,7 +238,26 @@ const AdminDoctors = ({ doctors, onRefresh }: AdminDoctorsProps) => {
                       }`}>{status}</span>
                     </div>
                     <p className="text-muted-foreground text-sm">{doc.specialization} • {doc.experience_years || 0} yrs • ₹{doc.consultation_fee}</p>
-                    {doc.license_number && <p className="text-muted-foreground/60 text-xs font-mono mt-0.5">License: {doc.license_number}</p>}
+                    <div className="flex items-center gap-4 mt-1">
+                      {doc.license_number && <p className="text-muted-foreground/60 text-xs font-mono uppercase tracking-wider">License: {doc.license_number}</p>}
+                      {doc.document_url && (
+                        <a 
+                          href={doc.document_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="group relative flex items-center gap-1.5 px-2 py-0.5 bg-muted rounded-md border border-border text-[10px] font-bold text-primary hover:bg-primary/5 transition-colors"
+                          title="Click to view full document"
+                        >
+                          <FileText className="w-3 h-3" />
+                          <span>DOCUMENT</span>
+                          {doc.document_url.match(/\.(jpg|jpeg|png|webp|gif|svg)$|image/i) && (
+                            <div className="absolute -right-20 -top-2 w-16 h-12 rounded border border-border bg-card shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 overflow-hidden">
+                              <img src={doc.document_url} alt="" className="w-full h-full object-cover" />
+                            </div>
+                          )}
+                        </a>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                     {status === "PENDING" && (<>
@@ -256,7 +281,16 @@ const AdminDoctors = ({ doctors, onRefresh }: AdminDoctorsProps) => {
                     <Button size="sm" variant="ghost" onClick={() => setExpandedDoctor(isExpanded ? null : doc.id)} className="text-muted-foreground hover:text-foreground h-9">
                       {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setDeleteConfirm(doc.id)} className="text-destructive/50 hover:text-destructive hover:bg-destructive/10 h-9"><Trash2 className="w-4 h-4" /></Button>
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      onClick={() => setDeleteConfirm(doc.id)} 
+                      disabled={status === "PENDING"}
+                      title={status === "PENDING" ? "Process application before deleting" : "Delete Doctor"}
+                      className="text-destructive/50 hover:text-destructive hover:bg-destructive/10 h-9 disabled:opacity-20 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
                 </div>
                 <AnimatePresence>

@@ -84,9 +84,8 @@ const AdminAppointments = ({ appointments, onRefresh }: AdminAppointmentsProps) 
       <div className="flex items-center gap-2 flex-wrap">
         {filters.map((f) => (
           <button key={f.key} onClick={() => setFilter(f.key)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-smooth ${
-              filter === f.key ? "bg-primary/10 text-primary border border-primary/20" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-            }`}>
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-smooth ${filter === f.key ? "bg-primary/10 text-primary border border-primary/20" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              }`}>
             {f.label} <span className="ml-1 text-xs opacity-60">{f.count}</span>
           </button>
         ))}
@@ -103,12 +102,11 @@ const AdminAppointments = ({ appointments, onRefresh }: AdminAppointmentsProps) 
             <motion.div key={apt.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}
               className={`bg-card rounded-2xl border border-border hover:border-primary/20 p-5 transition-smooth shadow-soft ${loading === apt.id ? "opacity-50 pointer-events-none" : ""}`}>
               <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                  apt.status === "confirmed" ? "bg-success/10" : apt.status === "pending" ? "bg-warning/10" : "bg-destructive/10"
-                }`}>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${apt.status === "confirmed" ? "bg-success/10" : apt.status === "pending" ? "bg-warning/10" : "bg-destructive/10"
+                  }`}>
                   {apt.status === "confirmed" ? <CheckCircle className="w-5 h-5 text-success" /> :
-                   apt.status === "pending" ? <Clock className="w-5 h-5 text-warning" /> :
-                   <XCircle className="w-5 h-5 text-destructive" />}
+                    apt.status === "pending" ? <Clock className="w-5 h-5 text-warning" /> :
+                      <XCircle className="w-5 h-5 text-destructive" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -122,9 +120,8 @@ const AdminAppointments = ({ appointments, onRefresh }: AdminAppointmentsProps) 
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                    apt.status === "confirmed" ? "bg-success/10 text-success" : apt.status === "pending" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"
-                  }`}>{apt.status}</span>
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${apt.status === "confirmed" ? "bg-success/10 text-success" : apt.status === "pending" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"
+                    }`}>{apt.status}</span>
                   {apt.status === "pending" && (
                     <Button size="sm" onClick={() => setConfirmAction({ id: apt.id, status: "confirmed", apt })}
                       className="bg-success/10 text-success hover:bg-success/20 border border-success/20 h-8 text-xs">

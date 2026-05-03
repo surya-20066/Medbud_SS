@@ -28,10 +28,16 @@ export function useRealtimeSubscription({
   const [status, setStatus] = useState<string>("idle");
   const channelRef = useRef<RealtimeChannel | null>(null);
 
+  const handlersRef = useRef({ onInsert, onUpdate, onDelete, onChange });
+
+  useEffect(() => {
+    handlersRef.current = { onInsert, onUpdate, onDelete, onChange };
+  }, [onInsert, onUpdate, onDelete, onChange]);
+
   useEffect(() => {
     if (!enabled) return;
 
-    const channelName = `realtime-${table}-${filter || "all"}-${Date.now()}`;
+    const channelName = `realtime-${table}-${filter || "all"}-${Math.random().toString(36).substring(7)}`;
 
     const channelConfig: any = {
       event,
@@ -46,6 +52,8 @@ export function useRealtimeSubscription({
     const channel = supabase
       .channel(channelName)
       .on("postgres_changes", channelConfig, (payload: any) => {
+        const { onInsert, onUpdate, onDelete, onChange } = handlersRef.current;
+        
         // Call specific handler based on event type
         if (payload.eventType === "INSERT" && onInsert) {
           onInsert(payload);

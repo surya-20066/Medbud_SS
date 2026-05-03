@@ -71,7 +71,13 @@ const Dashboard = () => {
         .eq("user_id", userId);
 
       if (rolesError) throw rolesError;
-      setUserRoles(rolesData.map((r) => r.role));
+      const roles = rolesData.map((r) => r.role);
+      setUserRoles(roles);
+      
+      if (roles.includes("doctor")) {
+        navigate("/doctor-dashboard");
+        return;
+      }
     } catch (error) {
       console.error("Error fetching user data:", error);
     } finally {
