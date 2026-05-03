@@ -64,13 +64,33 @@ const AdminPanel = () => {
 
   const fetchPatients = useCallback(async () => {
     try {
-      const { data: roleData } = await supabase.from("user_roles").select("user_id").eq("role", "patient");
-      const patientIds = roleData?.map(r => r.user_id) || [];
-      if (patientIds.length === 0) { setPatients([]); return; }
+      // Step 1: Get all doctor user_ids to exclude them
+      const { data: docRows } = await supabase.from("doctors").select("user_id");
+      const docUserIds = new Set(docRows?.map(d => d.user_id).filter(Boolean) || []);
 
-      const { data, error } = await supabase.from("profiles").select("*").in("id", patientIds).order("created_at", { ascending: false });
+      // Step 2: Try to get patients from user_roles
+      const { data: roleData } = await supabase.from("user_roles").select("user_id").eq("role", "patient");
+      const patientIdsFromRoles = roleData?.map(r => r.user_id) || [];
+
+      // Step 3: Fetch profiles
+      let query = supabase.from("profiles").select("*");
+      
+      // If we have specific patient IDs from roles, use them. 
+      // Otherwise, fetch all profiles and filter out doctors manually (fallback)
+      if (patientIdsFromRoles.length > 0) {
+        query = query.in("id", patientIdsFromRoles);
+      }
+
+      const { data, error } = await query.order("created_at", { ascending: false });
       if (error) throw error;
-      setPatients((data || []).map(p => ({ ...p, role: "patient" })));
+
+      // Filter out doctors if we're doing a broad search
+      const filteredData = patientIdsFromRoles.length > 0 
+        ? (data || []) 
+        : (data || []).filter(p => !docUserIds.has(p.id));
+
+      setPatients(filteredData.map(p => ({ ...p, role: "patient" })));
+      console.log(`Fetched ${filteredData.length} patients (Fallback mode: ${patientIdsFromRoles.length === 0})`);
     } catch (err) {
       console.error("Error fetching patients:", err);
     }

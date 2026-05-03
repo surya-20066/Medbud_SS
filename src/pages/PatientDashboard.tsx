@@ -98,7 +98,6 @@ const PatientDashboard = () => {
         .from("appointments")
         .select(`*, doctors:doctor_id (id, specialization, user_id)`)
         .eq("patient_id", userId)
-        .gte("appointment_date", new Date().toISOString().split("T")[0])
         .order("appointment_date", { ascending: true })
         .limit(10);
 
