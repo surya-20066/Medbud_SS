@@ -65,17 +65,36 @@ const Dashboard = () => {
       setProfile(profileData);
 
       // Fetch user roles
-      const { data: rolesData, error: rolesError } = await supabase
+      const { data: rolesData } = await supabase
         .from("user_roles")
         .select("role")
         .eq("user_id", userId);
 
-      if (rolesError) throw rolesError;
-      const roles = rolesData.map((r) => r.role);
+      const roles = rolesData?.map((r) => r.role) || [];
       setUserRoles(roles);
       
       if (roles.includes("doctor")) {
         navigate("/doctor-dashboard");
+        return;
+      }
+
+      // Fallback: if no roles found, check doctors table directly
+      if (roles.length === 0) {
+        const { data: doctorData } = await supabase
+          .from("doctors")
+          .select("id")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (doctorData) {
+          navigate("/doctor-dashboard");
+          return;
+        }
+      }
+
+      // If we're still here, it's a patient - redirect to patient dashboard
+      if (!roles.includes("admin")) {
+        navigate("/patient-dashboard");
         return;
       }
     } catch (error) {

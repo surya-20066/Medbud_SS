@@ -1,29 +1,48 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Stethoscope } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect, useState } from "react";
 import { User } from "@supabase/supabase-js";
 
 const Navbar = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [initialCheckDone, setInitialCheckDone] = useState(false);
 
   const fetchUserRole = async (userId: string) => {
+    // First check if user is a doctor (doctors table is the source of truth)
+    const { data: doctorData } = await supabase
+      .from("doctors")
+      .select("id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (doctorData) {
+      setRole("doctor");
+      return;
+    }
+
+    // Fallback: check user_roles table
     const { data } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", userId)
-      .single();
+      .maybeSingle();
+
     setRole(data?.role ?? "patient");
   };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) fetchUserRole(session.user.id);
+      if (session?.user) {
+        fetchUserRole(session.user.id);
+      }
+      setInitialCheckDone(true);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -40,8 +59,17 @@ const Navbar = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setUser(null);
+    setRole(null);
     navigate("/");
   };
+
+  // Determine if we're on a dashboard page (don't show Navbar there - dashboards have their own navs)
+  const isDashboardPage = ["/patient-dashboard", "/doctor-dashboard", "/admin-panel"].includes(location.pathname);
+  if (isDashboardPage) return null;
+
+  // Don't render auth-dependent UI until initial check is done
+  const showAuthButtons = initialCheckDone;
   
   return (
     <motion.nav
@@ -83,18 +111,20 @@ const Navbar = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            {user ? (
-              <>
-                <Button variant="ghost" onClick={() => navigate(role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard")}>
-                  Dashboard
-                </Button>
-                <Button variant="ghost" onClick={handleLogout}>Logout</Button>
-              </>
-            ) : (
-              <>
-                <Button variant="ghost" onClick={() => navigate("/auth")}>Login</Button>
-                <Button className="shadow-soft" onClick={() => navigate("/auth")}>Get Started</Button>
-              </>
+            {showAuthButtons && (
+              user ? (
+                <>
+                  <Button variant="ghost" onClick={() => navigate(role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard")}>
+                    Dashboard
+                  </Button>
+                  <Button variant="ghost" onClick={handleLogout}>Logout</Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="ghost" onClick={() => navigate("/auth")}>Login</Button>
+                  <Button className="shadow-soft" onClick={() => navigate("/auth")}>Get Started</Button>
+                </>
+              )
             )}
           </div>
         </div>

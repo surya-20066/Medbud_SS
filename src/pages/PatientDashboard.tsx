@@ -90,16 +90,17 @@ const PatientDashboard = () => {
       if (profileError) throw profileError;
       setProfile(profileData);
 
-      const { data: rolesData, error: rolesError } = await supabase.from("user_roles").select("role").eq("user_id", userId);
-      if (rolesError) throw rolesError;
-      setUserRoles(rolesData.map((r) => r.role));
+      // Fetch roles - don't throw on empty result
+      const { data: rolesData } = await supabase.from("user_roles").select("role").eq("user_id", userId);
+      setUserRoles(rolesData?.map((r) => r.role) || []);
 
+      // Fetch ALL appointments (recent + upcoming) so dashboard shows real data
       const { data: appointmentsData } = await supabase
         .from("appointments")
         .select(`*, doctors:doctor_id (id, specialization, user_id)`)
         .eq("patient_id", userId)
-        .order("appointment_date", { ascending: true })
-        .limit(10);
+        .order("appointment_date", { ascending: false })
+        .limit(20);
 
       const { data: tokensData } = await supabase
         .from("tokens")

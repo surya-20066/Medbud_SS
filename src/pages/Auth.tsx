@@ -46,6 +46,44 @@ const Auth = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // Helper: determine correct redirect path based on user role
+  const determineRedirectPath = async (userId: string): Promise<string> => {
+    const params = new URLSearchParams(window.location.search);
+    const returnTo = params.get("returnTo");
+
+    // Check user_roles table first
+    const { data: roles } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId);
+    
+    const userRoles = roles?.map(r => r.role) || [];
+
+    if (userRoles.includes("doctor")) {
+      return returnTo || "/doctor-dashboard";
+    }
+    if (userRoles.includes("admin")) {
+      return returnTo || "/dashboard";
+    }
+    if (userRoles.length > 0) {
+      return returnTo || "/patient-dashboard";
+    }
+
+    // Fallback: if user_roles is empty, check doctors table directly
+    const { data: doctorData } = await supabase
+      .from("doctors")
+      .select("id, is_active")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (doctorData) {
+      return returnTo || "/doctor-dashboard";
+    }
+
+    // Default to patient
+    return returnTo || "/patient-dashboard";
+  };
+
   useEffect(() => {
     // Check if URL has recovery hash
     const isRecovery = window.location.hash.includes("type=recovery");
@@ -58,26 +96,8 @@ const Auth = () => {
       if (isRecovery) return; // Prevent redirecting when user needs to reset password
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        // Check user role to redirect appropriately
-        const { data: roles } = await supabase
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", session.user.id);
-        
-        const userRoles = roles?.map(r => r.role) || [];
-        const getRedirectPath = (defaultPath: string) => {
-          const params = new URLSearchParams(window.location.search);
-          const returnTo = params.get("returnTo");
-          return returnTo || defaultPath;
-        };
-
-        if (userRoles.includes("doctor")) {
-          navigate(getRedirectPath("/doctor-dashboard"));
-        } else if (userRoles.includes("admin")) {
-          navigate(getRedirectPath("/dashboard"));
-        } else {
-          navigate(getRedirectPath("/patient-dashboard"));
-        }
+        const redirectPath = await determineRedirectPath(session.user.id);
+        navigate(redirectPath);
       }
     };
     checkUser();
@@ -193,32 +213,13 @@ const Auth = () => {
       }
 
       if (data.session) {
-        // Check user role to redirect appropriately
-        const { data: roles } = await supabase
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", data.session.user.id);
-        
-        const userRoles = roles?.map(r => r.role) || [];
-        
         toast({
           title: "Welcome back!",
           description: "Logged in successfully.",
         });
         
-        const getRedirectPath = (defaultPath: string) => {
-          const params = new URLSearchParams(window.location.search);
-          const returnTo = params.get("returnTo");
-          return returnTo || defaultPath;
-        };
-
-        if (userRoles.includes("doctor")) {
-          navigate(getRedirectPath("/doctor-dashboard"));
-        } else if (userRoles.includes("admin")) {
-          navigate(getRedirectPath("/dashboard"));
-        } else {
-          navigate(getRedirectPath("/patient-dashboard"));
-        }
+        const redirectPath = await determineRedirectPath(data.session.user.id);
+        navigate(redirectPath);
       }
     } catch (error) {
       if (error instanceof z.ZodError) {

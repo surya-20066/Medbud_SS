@@ -108,14 +108,12 @@ const AdminPanel = () => {
       if (apptErr) { console.error("Appt error:", apptErr); setAppointments([]); return; }
       if (!apptRows || apptRows.length === 0) { setAppointments([]); return; }
 
-      // Step 2: Get doctor IDs, then doctor user_ids, then profile names
+      // Step 2: Get doctor names
       const doctorIds = [...new Set(apptRows.map(a => a.doctor_id).filter(Boolean))];
-
       let docNameMap = new Map<string, string>();
       if (doctorIds.length > 0) {
         const { data: docRows } = await supabase.from("doctors").select("id, user_id").in("id", doctorIds);
         const docUserIds = docRows?.map(d => d.user_id).filter(Boolean) || [];
-
         if (docUserIds.length > 0) {
           const { data: profiles } = await supabase.from("profiles").select("id, full_name").in("id", docUserIds);
           const profileMap = new Map(profiles?.map(p => [p.id, p.full_name]) || []);
@@ -125,9 +123,18 @@ const AdminPanel = () => {
         }
       }
 
+      // Step 3: Get patient names
+      const patientIds = [...new Set(apptRows.map(a => a.patient_id).filter(Boolean))];
+      let patientNameMap = new Map<string, string>();
+      if (patientIds.length > 0) {
+        const { data: patientProfiles } = await supabase.from("profiles").select("id, full_name").in("id", patientIds);
+        patientProfiles?.forEach(p => patientNameMap.set(p.id, p.full_name));
+      }
+
       setAppointments(apptRows.map(a => ({
         ...a,
         doctorName: docNameMap.get(a.doctor_id) || "Unknown",
+        patientDisplayName: patientNameMap.get(a.patient_id) || "Unknown Patient",
       })));
     } catch (err) {
       console.error("Error fetching appointments:", err);
