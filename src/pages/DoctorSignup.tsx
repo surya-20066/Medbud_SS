@@ -39,11 +39,18 @@ const DoctorSignup = () => {
         return;
       }
 
+      // Fetch existing profile to preserve name and phone
+      const { data: existingProfile } = await supabase
+        .from("profiles")
+        .select("full_name, phone")
+        .eq("id", user.id)
+        .single();
+
       // Create doctor profile via server-side function (bypasses RLS)
       const { error: rpcError } = await supabase.rpc("create_doctor_profile", {
         p_user_id: user.id,
-        p_full_name: "",
-        p_phone: "",
+        p_full_name: existingProfile?.full_name || user.user_metadata?.full_name || "",
+        p_phone: existingProfile?.phone || user.user_metadata?.phone || "",
         p_specialization: formData.specialization,
         p_experience_years: parseInt(formData.experience_years),
         p_consultation_fee: parseFloat(formData.consultation_fee),

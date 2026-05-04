@@ -85,6 +85,7 @@ const DoctorDashboard = () => {
   const [updatingRecordId, setUpdatingRecordId] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [treatmentTokenId, setTreatmentTokenId] = useState<string | null>(null);
 
   const [settingsForm, setSettingsForm] = useState({ full_name: "", phone: "", avatar_url: "" });
   const [savingSettings, setSavingSettings] = useState(false);
@@ -139,13 +140,13 @@ const DoctorDashboard = () => {
       const [tokensRes, appointmentsRes, pendingRes, recordsRes] = await Promise.all([
         supabase
           .from("tokens")
-          .select(`*, profiles:patient_id (full_name, phone)`)
+          .select(`*, profiles:patient_id (id, full_name, phone)`)
           .eq("doctor_id", doctorData.id)
           .eq("token_date", today)
           .order("token_number", { ascending: true }),
         supabase
           .from("appointments")
-          .select("*, profiles:patient_id (full_name, phone)")
+          .select("*, profiles:patient_id (id, full_name, phone)")
           .eq("doctor_id", doctorData.id)
           .eq("status", "confirmed")
           .gte("appointment_date", today)
@@ -154,7 +155,7 @@ const DoctorDashboard = () => {
           .order("appointment_time", { ascending: true }),
         supabase
           .from("appointments")
-          .select("*, profiles:patient_id (full_name, phone)")
+          .select("*, profiles:patient_id (id, full_name, phone)")
           .eq("doctor_id", doctorData.id)
           .eq("status", "pending")
           .order("created_at", { ascending: false }),
@@ -238,6 +239,22 @@ const DoctorDashboard = () => {
       subscription.unsubscribe();
     };
   }, [navigate, fetchDoctorData]);
+
+  useRealtimeSubscription({
+    table: "tokens",
+    enabled: !!doctorInfo,
+    onChange: () => { if (session) fetchDoctorData(session.user.id); },
+  });
+
+  useRealtimeSubscription({
+    table: "appointments",
+    enabled: !!doctorInfo,
+    onInsert: () => {
+      if (session) fetchDoctorData(session.user.id);
+      toast({ title: "📅 New Appointment", description: "A patient has booked a new appointment." });
+    },
+    onUpdate: () => { if (session) fetchDoctorData(session.user.id); },
+  });
 
   const handleBookingAction = async (appointmentId: string, action: "accept" | "decline") => {
     try {
@@ -335,20 +352,6 @@ const DoctorDashboard = () => {
     fetchPreponeRequests();
   }, [fetchPreponeRequests]);
 
-  // Realtime: new tokens for this doctor
-  useRealtimeSubscription({
-    table: "tokens",
-    filter: doctorInfo ? `doctor_id=eq.${doctorInfo.id}` : undefined,
-    enabled: !!doctorInfo,
-    onInsert: () => {
-      if (doctorInfo) fetchDoctorData(session!.user.id);
-      toast({ title: "🔔 New Patient", description: "A new appointment has been booked!" });
-    },
-    onUpdate: () => {
-      if (doctorInfo) fetchDoctorData(session!.user.id);
-    },
-  });
-
   // Realtime: new prepone requests for this doctor
   useRealtimeSubscription({
     table: "prepone_requests",
@@ -360,20 +363,6 @@ const DoctorDashboard = () => {
     },
     onUpdate: () => {
       fetchPreponeRequests();
-    },
-  });
-
-  // Realtime: new/updated appointments for this doctor
-  useRealtimeSubscription({
-    table: "appointments",
-    filter: doctorInfo ? `doctor_id=eq.${doctorInfo.id}` : undefined,
-    enabled: !!doctorInfo,
-    onInsert: () => {
-      if (session) fetchDoctorData(session.user.id);
-      toast({ title: "🆕 New Booking!", description: "A patient just booked an appointment!" });
-    },
-    onUpdate: () => {
-      if (session) fetchDoctorData(session.user.id);
     },
   });
 
@@ -441,6 +430,33 @@ const DoctorDashboard = () => {
 
   const handleTokenStatusChange = async (tokenId: string, newStatus: string) => {
     try {
+      // If completing, open the record modal first instead of just marking complete
+      if (newStatus === "completed") {
+        const token = tokens.find(t => t.id === tokenId);
+        if (token && token.profiles) {
+          setViewingRecordPatient({ ...token.profiles, id: token.profiles.id || token.patient_id });
+          setTreatmentTokenId(tokenId);
+          
+          // Check if there's already a record for this token
+          const existingRec = patientRecords.find(r => r.token_id === tokenId);
+          if (existingRec) {
+            setUpdatingRecordId(existingRec.id);
+            setUpdateRecordForm({
+              diagnosis: existingRec.diagnosis || "",
+              prescription: existingRec.prescription || "",
+              notes: existingRec.notes || "",
+              attachments: (existingRec.attachments as string[]) || []
+            });
+          } else {
+            setUpdatingRecordId(null);
+            setUpdateRecordForm({ diagnosis: "", prescription: "", notes: "", attachments: [] });
+          }
+          
+          setShowUpdateRecordModal(true);
+          return;
+        }
+      }
+
       const { error: updateError } = await supabase
         .from("tokens")
         .update({ status: newStatus })
@@ -449,69 +465,6 @@ const DoctorDashboard = () => {
       if (updateError) throw updateError;
 
       toast({ title: "Success", description: `Token marked as ${newStatus}` });
-
-      // Auto-create an empty record when a token is completed, if it doesn't exist
-      if (newStatus === "completed" && doctorInfo) {
-        // Fetch the specific token to get the latest patient_id
-        const { data: tokenData, error: tokenError } = await supabase
-          .from("tokens")
-          .select("patient_id, profiles:patient_id (id, full_name, phone)")
-          .eq("id", tokenId)
-          .single();
-
-        if (tokenError) {
-          console.error("Error fetching token for record creation:", tokenError);
-        } else if (tokenData && tokenData.patient_id && tokenData.profiles) {
-          const { data: existingRecords, error: checkError } = await supabase
-            .from("patient_records")
-            .select("id, diagnosis, prescription, notes, attachments")
-            .eq("token_id", tokenId);
-
-          let recordToUpdateId = null;
-          let diagnosis = "";
-          let prescription = "";
-          let notes = "";
-          let attachments: string[] = [];
-
-          if (checkError) {
-            console.error("Error checking existing records:", checkError);
-          } else if (!existingRecords || existingRecords.length === 0) {
-            const { data: newRecord, error: insertError } = await supabase.from("patient_records").insert({
-              patient_id: tokenData.patient_id,
-              doctor_id: doctorInfo.id,
-              token_id: tokenId,
-              diagnosis: "",
-              prescription: "",
-              notes: "",
-              attachments: []
-            }).select().single();
-            if (!insertError && newRecord) {
-              recordToUpdateId = newRecord.id;
-            }
-          } else if (existingRecords && existingRecords.length > 0) {
-            recordToUpdateId = existingRecords[0].id;
-            diagnosis = existingRecords[0].diagnosis || "";
-            prescription = existingRecords[0].prescription || "";
-            notes = existingRecords[0].notes || "";
-            attachments = (existingRecords[0].attachments as string[]) || [];
-          }
-
-          // Open the modal for the doctor to add text/pics
-          if (recordToUpdateId) {
-            setViewingRecordPatient(tokenData.profiles);
-            setUpdatingRecordId(recordToUpdateId);
-            setUpdateRecordForm({
-              diagnosis,
-              prescription,
-              notes,
-              attachments
-            });
-            setShowUpdateRecordModal(true);
-          }
-        } else {
-          console.log("Token has no patient_id, skipping record creation");
-        }
-      }
 
       // Re-fetch all data to ensure UI is in sync
       if (session) {
@@ -602,6 +555,15 @@ const DoctorDashboard = () => {
     if (error) {
       toast({ title: "Error", description: "Failed to update record", variant: "destructive" });
     } else {
+      // If we are updating as part of completing a treatment
+      if (treatmentTokenId) {
+        await supabase
+          .from("tokens")
+          .update({ status: "completed" })
+          .eq("id", treatmentTokenId);
+        setTreatmentTokenId(null);
+      }
+      
       toast({ title: "Success", description: "Patient record updated" });
       setJustSaved(true);
       if (session) fetchDoctorData(session.user.id);
@@ -611,18 +573,28 @@ const DoctorDashboard = () => {
   const handleCreateNewRecord = async () => {
     if (!viewingRecordPatient || !doctorInfo) return;
 
-    // Find the most recent token for this patient to link the record
-    let latestTokenId = null;
-    const { data: latestTokens } = await supabase
-      .from("tokens")
-      .select("id")
-      .eq("patient_id", viewingRecordPatient.id)
-      .eq("doctor_id", doctorInfo.id)
-      .order("created_at", { ascending: false })
-      .limit(1);
+    if (!viewingRecordPatient.id) {
+      toast({
+        title: "Configuration Error",
+        description: "Patient identification missing. Please refresh the page.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    if (latestTokens && latestTokens.length > 0) {
-      latestTokenId = latestTokens[0].id;
+    // Use treatmentTokenId if available, otherwise find the most recent token
+    let targetTokenId = treatmentTokenId;
+    if (!targetTokenId) {
+      const { data: latestTokens } = await supabase
+        .from("tokens")
+        .select("id")
+        .eq("patient_id", viewingRecordPatient.id)
+        .eq("doctor_id", doctorInfo.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (latestTokens && latestTokens.length > 0) {
+        targetTokenId = latestTokens[0].id;
+      }
     }
 
     const { error } = await supabase
@@ -630,7 +602,7 @@ const DoctorDashboard = () => {
       .insert({
         patient_id: viewingRecordPatient.id,
         doctor_id: doctorInfo.id,
-        token_id: latestTokenId,
+        token_id: targetTokenId,
         diagnosis: updateRecordForm.diagnosis,
         prescription: updateRecordForm.prescription,
         notes: updateRecordForm.notes,
@@ -641,6 +613,15 @@ const DoctorDashboard = () => {
       console.error("Failed to create record:", error);
       toast({ title: "Error", description: error.message || "Failed to create record", variant: "destructive" });
     } else {
+      // If we are creating as part of completing a treatment
+      if (treatmentTokenId) {
+        await supabase
+          .from("tokens")
+          .update({ status: "completed" })
+          .eq("id", treatmentTokenId);
+        setTreatmentTokenId(null);
+      }
+
       toast({ title: "Success", description: "New patient record created" });
       setJustSaved(true);
       if (session) fetchDoctorData(session.user.id);
@@ -1196,16 +1177,32 @@ const DoctorDashboard = () => {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="flex-1"
+                                  className="flex-1 bg-primary/5 border-primary/20 hover:bg-primary/10 text-primary"
                                   onClick={() => {
-                                    setSelectedPatient(token.profiles);
-                                    setViewMode("records");
+                                    setViewingRecordPatient({ ...token.profiles, id: token.profiles.id || token.patient_id });
+                                    setTreatmentTokenId(token.id);
+                                    
+                                    const existingRec = patientRecords.find(r => r.token_id === token.id);
+                                    if (existingRec) {
+                                      setUpdatingRecordId(existingRec.id);
+                                      setUpdateRecordForm({
+                                        diagnosis: existingRec.diagnosis || "",
+                                        prescription: existingRec.prescription || "",
+                                        notes: existingRec.notes || "",
+                                        attachments: (existingRec.attachments as string[]) || []
+                                      });
+                                    } else {
+                                      setUpdatingRecordId(null);
+                                      setUpdateRecordForm({ diagnosis: "", prescription: "", notes: "", attachments: [] });
+                                    }
+                                    setShowUpdateRecordModal(true);
                                   }}
                                 >
-                                  <FileText className="w-4 h-4 mr-1" /> Add Record
+                                  <Stethoscope className="w-4 h-4 mr-1" /> Treat Patient
                                 </Button>
                                 <Button
                                   size="sm"
+                                  className="flex-1"
                                   onClick={() => handleTokenStatusChange(token.id, "completed")}
                                 >
                                   <CheckCircle className="w-4 h-4 mr-1" /> Complete
@@ -1947,13 +1944,15 @@ const DoctorDashboard = () => {
                   variant="outline"
                   className="text-xs h-8 gap-1 bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary"
                   onClick={() => {
-                    setUpdatingRecordId(null);
-                    setUpdateRecordForm({ diagnosis: "", prescription: "", notes: "", attachments: [] });
+                    if (!treatmentTokenId) {
+                      setUpdatingRecordId(null);
+                      setUpdateRecordForm({ diagnosis: "", prescription: "", notes: "", attachments: [] });
+                    }
                     setShowViewRecordModal(false);
                     setShowUpdateRecordModal(true);
                   }}
                 >
-                  <Plus className="w-3.5 h-3.5" /> New Record
+                  {treatmentTokenId ? <><ArrowUpCircle className="w-3.5 h-3.5 rotate-90" /> Back to Treatment</> : <><Plus className="w-3.5 h-3.5" /> New Record</>}
                 </Button>
                 <Button variant="ghost" size="icon" onClick={() => setShowViewRecordModal(false)}>
                   <X className="w-5 h-5" />
@@ -2038,15 +2037,36 @@ const DoctorDashboard = () => {
             className="relative bg-card rounded-2xl border border-border shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col"
           >
             <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
-              <div>
-                <h3 className="text-lg font-bold text-foreground">
-                  {justSaved ? "✅ Record Saved" : updatingRecordId ? "Update Record" : "New Record"}
-                </h3>
-                <p className="text-sm text-muted-foreground">{viewingRecordPatient.full_name}</p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                   <User className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-foreground leading-tight">
+                    {justSaved ? "✅ Record Saved" : updatingRecordId ? "Update Record" : "New Record"}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">{viewingRecordPatient.full_name}</p>
+                </div>
               </div>
-              <Button variant="ghost" size="icon" onClick={() => { setShowUpdateRecordModal(false); setJustSaved(false); setUpdatingRecordId(null); }}>
-                <X className="w-5 h-5" />
-              </Button>
+              <div className="flex items-center gap-2">
+                {!justSaved && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-8 text-[10px] font-bold uppercase tracking-widest border-primary/20 text-primary hover:bg-primary/5"
+                    onClick={() => {
+                      setViewingRecordPatient(viewingRecordPatient);
+                      setShowUpdateRecordModal(false);
+                      setShowViewRecordModal(true);
+                    }}
+                  >
+                    <FileText className="w-3 h-3 mr-1" /> History
+                  </Button>
+                )}
+                <Button variant="ghost" size="icon" className="rounded-full" onClick={() => { setShowUpdateRecordModal(false); setJustSaved(false); setUpdatingRecordId(null); setTreatmentTokenId(null); }}>
+                  <X className="w-5 h-5" />
+                </Button>
+              </div>
             </div>
 
             {justSaved ? (
@@ -2160,12 +2180,17 @@ const DoctorDashboard = () => {
                     onClick={updatingRecordId ? handleUpdateRecord : handleCreateNewRecord}
                   >
                     <Save className="w-4 h-4 mr-2" />
-                    {updatingRecordId ? "Update Record" : "Create Record"}
+                    {treatmentTokenId ? "Save & Complete Appointment" : (updatingRecordId ? "Update Record" : "Create Record")}
                   </Button>
                   <Button
                     variant="ghost"
                     className="flex-1 h-12 rounded-xl font-bold"
-                    onClick={() => { setShowUpdateRecordModal(false); setJustSaved(false); setUpdatingRecordId(null); }}
+                    onClick={() => { 
+                      setShowUpdateRecordModal(false); 
+                      setJustSaved(false); 
+                      setUpdatingRecordId(null); 
+                      setTreatmentTokenId(null);
+                    }}
                   >
                     Cancel
                   </Button>

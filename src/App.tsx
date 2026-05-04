@@ -14,6 +14,7 @@ import BookAppointment from "./pages/BookAppointment";
 import DoctorSignup from "./pages/DoctorSignup";
 import DoctorAuth from "./pages/DoctorAuth";
 import AdminPanel from "./pages/AdminPanel";
+import LanguageSelector from "./components/LanguageSelector";
 
 
 const queryClient = new QueryClient();
@@ -58,6 +59,7 @@ const App = () => {
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      <LanguageSelector />
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />

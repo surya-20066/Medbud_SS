@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Session } from "@supabase/supabase-js";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import AIHealthAssistant from "@/components/AIHealthAssistant";
+import MedGeniusBot from "@/components/MedGeniusBot";
 
 const PatientDashboard = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -36,7 +36,11 @@ const PatientDashboard = () => {
   const [patientRecords, setPatientRecords] = useState<any[]>([]);
   const [showRecordsModal, setShowRecordsModal] = useState(false);
   const [selectedRecordDoctor, setSelectedRecordDoctor] = useState<string | null>(null);
-  const [viewingRecord, setViewingRecord] = useState<any>(null);
+  const [viewingRecordId, setViewingRecordId] = useState<string | null>(null);
+  const viewingRecord = useMemo(() => 
+    patientRecords.find(r => r.id === viewingRecordId), 
+    [patientRecords, viewingRecordId]
+  );
   const [showQueueModal, setShowQueueModal] = useState(false);
   const [queueData, setQueueData] = useState<any[]>([]);
   const [selectedQueueToken, setSelectedQueueToken] = useState<any>(null);
@@ -86,87 +90,63 @@ const PatientDashboard = () => {
 
   const fetchUserData = async (userId: string) => {
     try {
-      const { data: profileData, error: profileError } = await supabase.from("profiles").select("*").eq("id", userId).single();
-      if (profileError) throw profileError;
-      setProfile(profileData);
+      const today = new Date().toISOString().split("T")[0];
 
-      // Fetch roles - don't throw on empty result
-      const { data: rolesData } = await supabase.from("user_roles").select("role").eq("user_id", userId);
-      setUserRoles(rolesData?.map((r) => r.role) || []);
+      // Parallel fetch all dashboard data
+      const [
+        profileRes,
+        rolesRes,
+        appointmentsRes,
+        tokensRes,
+        recordsRes
+      ] = await Promise.all([
+        supabase.from("profiles").select("*").eq("id", userId).single(),
+        supabase.from("user_roles").select("role").eq("user_id", userId),
+        supabase
+          .from("appointments")
+          .select(`*, doctors:doctor_id (id, specialization, user_id, profiles:user_id (full_name))`)
+          .eq("patient_id", userId)
+          .order("appointment_date", { ascending: true })
+          .limit(10),
+        supabase
+          .from("tokens")
+          .select(`*, doctors:doctor_id (id, specialization, user_id, profiles:user_id (full_name))`)
+          .eq("patient_id", userId)
+          .in("status", ["waiting", "in_progress"])
+          .gte("token_date", today)
+          .order("token_date", { ascending: true })
+          .limit(50),
+        supabase
+          .from("patient_records")
+          .select(`*, doctors:doctor_id (id, user_id, profiles:user_id (full_name)), tokens:token_id (token_number, token_date)`)
+          .eq("patient_id", userId)
+          .order("created_at", { ascending: false })
+      ]);
 
-      const { data: appointmentsData } = await supabase
-        .from("appointments")
-        .select(`*, doctors:doctor_id (id, specialization, user_id, profiles:user_id (full_name))`)
-        .eq("patient_id", userId)
-        .order("appointment_date", { ascending: true })
-        .limit(10);
-
-      const { data: tokensData } = await supabase
-        .from("tokens")
-        .select(`*, doctors:doctor_id (id, specialization, user_id, profiles:user_id (full_name))`)
-        .eq("patient_id", userId)
-        .in("status", ["waiting", "in_progress"])
-        .gte("token_date", new Date().toISOString().split("T")[0])
-        .order("token_date", { ascending: true })
-        .limit(50);
-
-      // Fetch patient records
-      const { data: recordsData } = await supabase
-        .from("patient_records")
-        .select(`*, doctors:doctor_id (id, user_id, profiles:user_id (full_name)), tokens:token_id (token_number, token_date)`)
-        .eq("patient_id", userId)
-        .order("created_at", { ascending: false });
-
-      // Gather all doctor user_ids to fetch profiles manually
-      const doctorUserIds = new Set<string>();
-      const addDocId = (doc: any) => {
-        if (doc) {
-          const d = Array.isArray(doc) ? doc[0] : doc;
-          if (d && d.user_id) doctorUserIds.add(d.user_id);
-        }
-      };
-
-      appointmentsData?.forEach(a => addDocId(a.doctors));
-      tokensData?.forEach(t => addDocId(t.doctors));
-      recordsData?.forEach(r => addDocId(r.doctors));
-
-      const { data: docProfiles } = await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .in("id", Array.from(doctorUserIds));
-
-      const docProfileMap = new Map();
-      docProfiles?.forEach(p => docProfileMap.set(p.id, p));
-
-      if (appointmentsData) {
-        setAppointments(appointmentsData.map((apt) => {
-          const doc = Array.isArray(apt.doctors) ? apt.doctors[0] : apt.doctors;
-          return {
-            ...apt,
-            doctors: { ...doc, profiles: docProfileMap.get(doc?.user_id) }
-          };
-        }));
+      if (profileRes.data) setProfile(profileRes.data);
+      if (rolesRes.data) setUserRoles(rolesRes.data.map(r => r.role));
+      
+      if (appointmentsRes.data) {
+        setAppointments(appointmentsRes.data.map(apt => ({
+          ...apt,
+          doctors: Array.isArray(apt.doctors) ? apt.doctors[0] : apt.doctors
+        })));
       }
 
-      if (tokensData) {
-        setTokens(tokensData.map((token) => {
-          const doc = Array.isArray(token.doctors) ? token.doctors[0] : token.doctors;
-          return {
-            ...token,
-            doctors: { ...doc, profiles: docProfileMap.get(doc?.user_id) }
-          };
-        }));
+      if (tokensRes.data) {
+        setTokens(tokensRes.data.map(token => ({
+          ...token,
+          doctors: Array.isArray(token.doctors) ? token.doctors[0] : token.doctors
+        })));
       }
 
-      if (recordsData) {
-        setPatientRecords(recordsData.map(r => {
-          const doc = Array.isArray(r.doctors) ? r.doctors[0] : r.doctors;
-          return {
-            ...r,
-            doctors: { ...doc, profiles: docProfileMap.get(doc?.user_id) }
-          };
-        }));
+      if (recordsRes.data) {
+        setPatientRecords(recordsRes.data.map(record => ({
+          ...record,
+          doctors: Array.isArray(record.doctors) ? record.doctors[0] : record.doctors
+        })));
       }
+
     } catch (error) {
       console.error("Error fetching user data:", error);
     } finally {
@@ -178,14 +158,12 @@ const PatientDashboard = () => {
 
   useRealtimeSubscription({
     table: "appointments",
-    filter: session ? `patient_id=eq.${session.user.id}` : undefined,
     enabled: !!session,
     onChange: () => { if (session) fetchUserData(session.user.id); },
   });
 
   useRealtimeSubscription({
     table: "tokens",
-    filter: session ? `patient_id=eq.${session.user.id}` : undefined,
     enabled: !!session,
     onUpdate: (payload) => {
       const newStatus = payload.new?.status;
@@ -195,6 +173,19 @@ const PatientDashboard = () => {
       if (session) fetchUserData(session.user.id);
     },
     onInsert: () => { if (session) fetchUserData(session.user.id); },
+  });
+
+  useRealtimeSubscription({
+    table: "patient_records",
+    enabled: !!session,
+    onInsert: () => { 
+      if (session) fetchUserData(session.user.id);
+      toast({ title: "📄 New Medical Record", description: "Your doctor has added a new record to your history." });
+    },
+    onUpdate: () => { 
+      if (session) fetchUserData(session.user.id);
+      toast({ title: "📝 Record Updated", description: "Your medical record has been updated by the doctor." });
+    },
   });
 
   useEffect(() => {
@@ -287,11 +278,21 @@ const PatientDashboard = () => {
   };
 
   const handleLogout = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      toast({ title: "Error", description: "Failed to logout.", variant: "destructive" });
-    } else {
+    try {
+      // Clear all local storage manually to ensure no stale sessions
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.warn("Supabase signOut error:", error.message);
+      }
+      
       toast({ title: "Logged out", description: "You have been logged out successfully." });
+      navigate("/");
+    } catch (err) {
+      console.error("Logout error:", err);
+      // Even if it fails, we cleared storage and should navigate away
       navigate("/");
     }
   };
@@ -615,11 +616,22 @@ const PatientDashboard = () => {
                 </div>
                 <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setShowAIAssistant(false)}><X className="w-4 h-4" /></Button>
               </div>
-              <AIHealthAssistant />
+              <MedGeniusBot />
             </div>
           </motion.div>
         </div>
       </main>
+
+      {/* Mobile AI Toggle Button */}
+      {!showAIAssistant && (
+        <Button
+          onClick={() => setShowAIAssistant(true)}
+          className="fixed bottom-6 right-6 w-14 h-14 rounded-full shadow-2xl z-40 lg:hidden flex items-center justify-center bg-primary text-white transition-all hover:scale-110 active:scale-95"
+        >
+          <Bot className="w-7 h-7" />
+          <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white" />
+        </Button>
+      )}
 
       {/* Settings Modal */}
       {showSettingsModal && (
@@ -704,13 +716,13 @@ const PatientDashboard = () => {
       {/* My Records Modal */}
       {showRecordsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-md" onClick={() => { setShowRecordsModal(false); setSelectedRecordDoctor(null); setViewingRecord(null); }} />
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-md" onClick={() => { setShowRecordsModal(false); setSelectedRecordDoctor(null); setViewingRecordId(null); }} />
           <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
             <div className="p-6 border-b border-border flex items-center justify-between bg-muted/10 shrink-0">
               <div className="flex items-center gap-3">
                 {(selectedRecordDoctor || viewingRecord) && (
                   <Button variant="ghost" size="icon" onClick={() => {
-                    if (viewingRecord) { setViewingRecord(null); }
+                    if (viewingRecordId) { setViewingRecordId(null); }
                     else { setSelectedRecordDoctor(null); }
                   }} className="h-10 w-10 rounded-full hover:bg-background">
                     <ChevronRight className="w-6 h-6 rotate-180" />
@@ -723,7 +735,7 @@ const PatientDashboard = () => {
                   <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{profile?.full_name}</p>
                 </div>
               </div>
-              <Button variant="ghost" size="icon" className="rounded-full hover:bg-background" onClick={() => { setShowRecordsModal(false); setSelectedRecordDoctor(null); setViewingRecord(null); }}><X className="w-6 h-6" /></Button>
+              <Button variant="ghost" size="icon" className="rounded-full hover:bg-background" onClick={() => { setShowRecordsModal(false); setSelectedRecordDoctor(null); setViewingRecordId(null); }}><X className="w-6 h-6" /></Button>
             </div>
             <ScrollArea className="flex-1 p-6">
               {!selectedRecordDoctor && !viewingRecord && (
@@ -777,7 +789,7 @@ const PatientDashboard = () => {
                             {record.diagnosis && <p className="text-xs text-muted-foreground truncate mt-2 italic">"{record.diagnosis}"</p>}
                           </div>
                         </div>
-                        <Button size="sm" variant="ghost" className="flex-shrink-0 ml-4 rounded-xl font-bold uppercase text-[10px] tracking-widest hover:bg-primary hover:text-white transition-all px-4" onClick={() => setViewingRecord(record)}>
+                        <Button size="sm" variant="ghost" className="flex-shrink-0 ml-4 rounded-xl font-bold uppercase text-[10px] tracking-widest hover:bg-primary hover:text-white transition-all px-4" onClick={() => setViewingRecordId(record.id)}>
                           <Eye className="w-4 h-4 mr-2" /> View
                         </Button>
                       </div>

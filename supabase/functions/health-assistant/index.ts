@@ -12,70 +12,57 @@ serve(async (req) => {
 
   try {
     const { messages } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const API_KEY = Deno.env.get("LOVABLE_API_KEY") || "AIzaSyAsxKe41KyM2y-vj8N85zdhg5kLLFgYJ20";
     
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    if (!API_KEY) {
+      throw new Error("API Key is not configured");
     }
 
-    const systemPrompt = `You are a helpful AI health assistant for a hospital management system. You can help patients with:
+    const systemPrompt = `You are a helpful AI health assistant for a hospital management system. 
+    Guidelines:
+    - Never diagnose conditions - always recommend professional medical consultation.
+    - Be empathetic and supportive.
+    - For emergencies, always advise calling emergency services immediately.
+    - Keep responses concise but informative.`;
 
-1. **Symptom Assessment**: Ask clarifying questions about symptoms and provide general health guidance. Always recommend consulting a doctor for proper diagnosis.
+    // Map OpenAI messages to Gemini contents
+    const contents = messages.map((m: any) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }]
+    }));
 
-2. **Appointment Guidance**: Help patients understand what type of specialist they might need based on their symptoms.
+    // Prepend system instructions to the first message for maximum compatibility
+    if (contents.length > 0 && contents[0].role === "user") {
+      contents[0].parts[0].text = `Instructions: ${systemPrompt}\n\nUser Message: ${contents[0].parts[0].text}`;
+    }
 
-3. **General Health Tips**: Provide evidence-based health tips, preventive care advice, and wellness recommendations.
-
-4. **Medical Information**: Explain medical terms, procedures, and conditions in simple language.
-
-5. **Pre-appointment Preparation**: Help patients prepare questions for their doctor visits.
-
-Important Guidelines:
-- Never diagnose conditions - always recommend professional medical consultation
-- Be empathetic and supportive in your responses
-- Provide accurate, evidence-based health information
-- For emergencies, always advise calling emergency services immediately
-- Keep responses concise but informative
-- Use simple language that patients can understand`;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages,
-        ],
-        stream: true,
+        contents: contents,
       }),
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limits exceeded, please try again later." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Service temporarily unavailable. Please try again later." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      return new Response(JSON.stringify({ error: "AI service error" }), {
-        status: 500,
+      console.error("Gemini API error:", response.status, data);
+      const errorMessage = data.error?.message || data.error?.status || "Unknown AI error";
+      return new Response(JSON.stringify({ error: `Gemini Error (${response.status}): ${errorMessage}` }), {
+        status: response.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    return new Response(response.body, {
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "I'm sorry, I couldn't generate a response.";
+    
+    // Return in a format that the streaming-aware frontend can handle
+    const sseData = `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
+    
+    return new Response(sseData, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (error) {
